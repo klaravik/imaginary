@@ -2,15 +2,15 @@ package main
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"net/url"
-	"log"
 	"os"
 	"os/signal"
-	"syscall"
 	"path"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -133,6 +133,6 @@ func NewServerMux(o ServerOptions) http.Handler {
 	mux.Handle(join(o, "/info"), image(Info))
 	mux.Handle(join(o, "/blur"), image(GaussianBlur))
 	mux.Handle(join(o, "/pipeline"), image(Pipeline))
-
+	mux.Handle(join(o, "/serve"), image(Serve))
 	return mux
 }

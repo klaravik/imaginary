@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"io/ioutil"
 	"math"
 	"net/http"
+	"strings"
 
 	"github.com/h2non/bimg"
 )
@@ -41,11 +41,11 @@ type Image struct {
 }
 
 // Operation implements an image transformation runnable interface
-type Operation func([]byte, ImageOptions) (Image, error)
+type Operation func([]byte, ImageOptions, http.ResponseWriter, *http.Request) (Image, error)
 
 // Run performs the image transformation
-func (o Operation) Run(buf []byte, opts ImageOptions) (Image, error) {
-	return o(buf, opts)
+func (o Operation) Run(buf []byte, opts ImageOptions, w http.ResponseWriter, r *http.Request) (Image, error) {
+	return o(buf, opts, w, r)
 }
 
 // ImageInfo represents an image details and additional metadata
@@ -60,7 +60,7 @@ type ImageInfo struct {
 	Orientation int    `json:"orientation"`
 }
 
-func Info(buf []byte, o ImageOptions) (Image, error) {
+func Info(buf []byte, o ImageOptions, w http.ResponseWriter, r *http.Request) (Image, error) {
 	// We're not handling an image here, but we reused the struct.
 	// An interface will be definitively better here.
 	image := Image{Mime: "application/json"}
@@ -87,7 +87,26 @@ func Info(buf []byte, o ImageOptions) (Image, error) {
 	return image, nil
 }
 
-func Resize(buf []byte, o ImageOptions) (Image, error) {
+func Serve(buf []byte, o ImageOptions, w http.ResponseWriter, r *http.Request) (Image, error) {
+	fmt.Println("hi")
+	folderPath := "testdata/"
+
+	paramOpts, err := buildParamsFromQuery(r.URL.Query())
+	if err != nil {
+		return Image{}, NewError("Missing params", http.StatusBadRequest)
+	}
+
+	imageFile := fmt.Sprintf("%s%s", folderPath, paramOpts.I)
+
+	imageData, err := ioutil.ReadFile(imageFile)
+	opts := BimgOptions(o)
+	opts.Embed = true
+
+	return Process(imageData, opts)
+}
+
+func Resize(buf []byte, o ImageOptions, w http.ResponseWriter, r *http.Request) (Image, error) {
+	fmt.Println("im here gov")
 	if o.Width == 0 && o.Height == 0 {
 		return Image{}, NewError("Missing required param: height or width", http.StatusBadRequest)
 	}
@@ -102,7 +121,7 @@ func Resize(buf []byte, o ImageOptions) (Image, error) {
 	return Process(buf, opts)
 }
 
-func Fit(buf []byte, o ImageOptions) (Image, error) {
+func Fit(buf []byte, o ImageOptions, w http.ResponseWriter, r *http.Request) (Image, error) {
 	if o.Width == 0 || o.Height == 0 {
 		return Image{}, NewError("Missing required params: height, width", http.StatusBadRequest)
 	}
@@ -165,7 +184,7 @@ func calculateDestinationFitDimension(imageWidth, imageHeight, fitWidth, fitHeig
 	return fitWidth, fitHeight
 }
 
-func Enlarge(buf []byte, o ImageOptions) (Image, error) {
+func Enlarge(buf []byte, o ImageOptions, w http.ResponseWriter, r *http.Request) (Image, error) {
 	if o.Width == 0 || o.Height == 0 {
 		return Image{}, NewError("Missing required params: height, width", http.StatusBadRequest)
 	}
@@ -179,7 +198,7 @@ func Enlarge(buf []byte, o ImageOptions) (Image, error) {
 	return Process(buf, opts)
 }
 
-func Extract(buf []byte, o ImageOptions) (Image, error) {
+func Extract(buf []byte, o ImageOptions, w http.ResponseWriter, r *http.Request) (Image, error) {
 	if o.AreaWidth == 0 || o.AreaHeight == 0 {
 		return Image{}, NewError("Missing required params: areawidth or areaheight", http.StatusBadRequest)
 	}
@@ -193,7 +212,7 @@ func Extract(buf []byte, o ImageOptions) (Image, error) {
 	return Process(buf, opts)
 }
 
-func Crop(buf []byte, o ImageOptions) (Image, error) {
+func Crop(buf []byte, o ImageOptions, w http.ResponseWriter, r *http.Request) (Image, error) {
 	if o.Width == 0 && o.Height == 0 {
 		return Image{}, NewError("Missing required param: height or width", http.StatusBadRequest)
 	}
@@ -203,7 +222,7 @@ func Crop(buf []byte, o ImageOptions) (Image, error) {
 	return Process(buf, opts)
 }
 
-func SmartCrop(buf []byte, o ImageOptions) (Image, error) {
+func SmartCrop(buf []byte, o ImageOptions, w http.ResponseWriter, r *http.Request) (Image, error) {
 	if o.Width == 0 && o.Height == 0 {
 		return Image{}, NewError("Missing required param: height or width", http.StatusBadRequest)
 	}
@@ -214,7 +233,7 @@ func SmartCrop(buf []byte, o ImageOptions) (Image, error) {
 	return Process(buf, opts)
 }
 
-func Rotate(buf []byte, o ImageOptions) (Image, error) {
+func Rotate(buf []byte, o ImageOptions, w http.ResponseWriter, r *http.Request) (Image, error) {
 	if o.Rotate == 0 {
 		return Image{}, NewError("Missing required param: rotate", http.StatusBadRequest)
 	}
@@ -223,7 +242,7 @@ func Rotate(buf []byte, o ImageOptions) (Image, error) {
 	return Process(buf, opts)
 }
 
-func AutoRotate(buf []byte, o ImageOptions) (out Image, err error) {
+func AutoRotate(buf []byte, o ImageOptions, w http.ResponseWriter, r *http.Request) (out Image, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			switch value := r.(type) {
@@ -248,19 +267,19 @@ func AutoRotate(buf []byte, o ImageOptions) (out Image, err error) {
 	return Image{Body: ibuf, Mime: mime}, nil
 }
 
-func Flip(buf []byte, o ImageOptions) (Image, error) {
+func Flip(buf []byte, o ImageOptions, w http.ResponseWriter, r *http.Request) (Image, error) {
 	opts := BimgOptions(o)
 	opts.Flip = true
 	return Process(buf, opts)
 }
 
-func Flop(buf []byte, o ImageOptions) (Image, error) {
+func Flop(buf []byte, o ImageOptions, w http.ResponseWriter, r *http.Request) (Image, error) {
 	opts := BimgOptions(o)
 	opts.Flop = true
 	return Process(buf, opts)
 }
 
-func Thumbnail(buf []byte, o ImageOptions) (Image, error) {
+func Thumbnail(buf []byte, o ImageOptions, w http.ResponseWriter, r *http.Request) (Image, error) {
 	if o.Width == 0 && o.Height == 0 {
 		return Image{}, NewError("Missing required params: width or height", http.StatusBadRequest)
 	}
@@ -268,7 +287,7 @@ func Thumbnail(buf []byte, o ImageOptions) (Image, error) {
 	return Process(buf, BimgOptions(o))
 }
 
-func Zoom(buf []byte, o ImageOptions) (Image, error) {
+func Zoom(buf []byte, o ImageOptions, w http.ResponseWriter, r *http.Request) (Image, error) {
 	if o.Factor == 0 {
 		return Image{}, NewError("Missing required param: factor", http.StatusBadRequest)
 	}
@@ -294,7 +313,7 @@ func Zoom(buf []byte, o ImageOptions) (Image, error) {
 	return Process(buf, opts)
 }
 
-func Convert(buf []byte, o ImageOptions) (Image, error) {
+func Convert(buf []byte, o ImageOptions, w http.ResponseWriter, r *http.Request) (Image, error) {
 	if o.Type == "" {
 		return Image{}, NewError("Missing required param: type", http.StatusBadRequest)
 	}
@@ -306,7 +325,7 @@ func Convert(buf []byte, o ImageOptions) (Image, error) {
 	return Process(buf, opts)
 }
 
-func Watermark(buf []byte, o ImageOptions) (Image, error) {
+func Watermark(buf []byte, o ImageOptions, w http.ResponseWriter, r *http.Request) (Image, error) {
 	if o.Text == "" {
 		return Image{}, NewError("Missing required param: text", http.StatusBadRequest)
 	}
@@ -327,7 +346,7 @@ func Watermark(buf []byte, o ImageOptions) (Image, error) {
 	return Process(buf, opts)
 }
 
-func WatermarkImage(buf []byte, o ImageOptions) (Image, error) {
+func WatermarkImage(buf []byte, o ImageOptions, w http.ResponseWriter, r *http.Request) (Image, error) {
 	if o.Image == "" {
 		return Image{}, NewError("Missing required param: image", http.StatusBadRequest)
 	}
@@ -361,7 +380,7 @@ func WatermarkImage(buf []byte, o ImageOptions) (Image, error) {
 	return Process(buf, opts)
 }
 
-func GaussianBlur(buf []byte, o ImageOptions) (Image, error) {
+func GaussianBlur(buf []byte, o ImageOptions, w http.ResponseWriter, r *http.Request) (Image, error) {
 	if o.Sigma == 0 && o.MinAmpl == 0 {
 		return Image{}, NewError("Missing required param: sigma or minampl", http.StatusBadRequest)
 	}
@@ -369,7 +388,7 @@ func GaussianBlur(buf []byte, o ImageOptions) (Image, error) {
 	return Process(buf, opts)
 }
 
-func Pipeline(buf []byte, o ImageOptions) (Image, error) {
+func Pipeline(buf []byte, o ImageOptions, w http.ResponseWriter, r *http.Request) (Image, error) {
 	if len(o.Operations) == 0 {
 		return Image{}, NewError("Missing or invalid pipeline operations JSON", http.StatusBadRequest)
 	}
@@ -403,7 +422,7 @@ func Pipeline(buf []byte, o ImageOptions) (Image, error) {
 	image = Image{Body: buf}
 	for _, operation := range o.Operations {
 		var curImage Image
-		curImage, err = operation.Operation(image.Body, operation.ImageOptions)
+		curImage, err = operation.Operation(image.Body, operation.ImageOptions, w, r)
 		if err != nil && !operation.IgnoreFailure {
 			return Image{}, err
 		}

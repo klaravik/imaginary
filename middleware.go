@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/h2non/bimg"
 	"github.com/rs/cors"
 	"gopkg.in/throttled/throttled.v2"
@@ -103,8 +104,8 @@ func validateImage(next http.Handler, o ServerOptions) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-
-		if r.Method == http.MethodGet && o.Mount == "" && !o.EnableURLSource {
+		spew.Dump(r.Method)
+		if (r.Method != http.MethodGet && r.Method != http.MethodPost) && o.Mount == "" && !o.EnableURLSource {
 			ErrorReply(r, w, ErrGetMethodNotAllowed, o)
 			return
 		}
@@ -160,7 +161,7 @@ func getCacheControl(ttl int) string {
 }
 
 func isPublicPath(path string) bool {
-	return path == "/" || path == "/health" || path == "/form"
+	return path == "/" || path == "/health" || path == "/form" || path == "/serve"
 }
 
 func validateURLSignature(next http.Handler, o ServerOptions) http.Handler {

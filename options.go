@@ -48,6 +48,7 @@ type ImageOptions struct {
 	Gravity       bimg.Gravity
 	Colorspace    bimg.Interpretation
 	Operations    PipelineOperations
+	I             string
 }
 
 // IsDefinedField holds boolean ImageOptions fields. If true it means the field was specified in the request. This

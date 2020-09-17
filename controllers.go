@@ -3,8 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"mime"
+	"mime/multipart"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -36,28 +39,33 @@ func healthController(w http.ResponseWriter, r *http.Request) {
 
 func imageController(o ServerOptions, operation Operation) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, req *http.Request) {
+		paramOpts, err := buildParamsFromQuery(req.URL.Query())
+		if err != nil {
+			ErrorReply(req, w, NewError("Missing params", http.StatusBadRequest), o)
+		}
 		var imageSource = MatchSource(req)
-		if imageSource == nil {
+		if imageSource == nil && paramOpts.I == "" {
 			ErrorReply(req, w, ErrMissingImageSource, o)
 			return
 		}
-
-		buf, err := imageSource.GetImage(req)
-		if err != nil {
-			if xerr, ok := err.(Error); ok {
-				ErrorReply(req, w, xerr, o)
-			} else {
-				ErrorReply(req, w, NewError(err.Error(), http.StatusBadRequest), o)
+		if imageSource != nil {
+			buf, err := imageSource.GetImage(req)
+			if err != nil {
+				if xerr, ok := err.(Error); ok {
+					ErrorReply(req, w, xerr, o)
+				} else {
+					ErrorReply(req, w, NewError(err.Error(), http.StatusBadRequest), o)
+				}
+				return
 			}
-			return
-		}
 
-		if len(buf) == 0 {
-			ErrorReply(req, w, ErrEmptyBody, o)
-			return
+			if len(buf) == 0 {
+				ErrorReply(req, w, ErrEmptyBody, o)
+				return
+			}
+			imageHandler(w, req, buf, operation, o)
 		}
-
-		imageHandler(w, req, buf, operation, o)
+		imageHandler(w, req, []byte{}, operation, o)
 	}
 }
 
@@ -78,8 +86,52 @@ func determineAcceptMimeType(accept string) string {
 }
 
 func imageHandler(w http.ResponseWriter, r *http.Request, buf []byte, operation Operation, o ServerOptions) {
+
+	paramOpts, err := buildParamsFromQuery(r.URL.Query())
+	if err != nil {
+		ErrorReply(r, w, NewError("Missing params", http.StatusBadRequest), o)
+	}
+
+	var (
+		file            string
+		staticFileFound bool  = false
+		image           Image = Image{}
+		handler         *multipart.FileHeader
+		source          []byte
+	)
+
+	if paramOpts.I != "" && r.Method == http.MethodGet {
+		file = paramOpts.I
+	}
+	if r.Method == http.MethodPost {
+		debug("found post request with containing binary file")
+		_, handler, err = r.FormFile("file")
+		if err != nil {
+			ErrorReply(r, w, NewError("Cannot find posted image", http.StatusBadRequest), o)
+			return
+		}
+		file = handler.Filename
+		source = buf
+	} else if file != "" {
+		debug("found get request with I-param")
+
+		if fileExists(file) {
+			// RETURN STATIC FILE
+			image.Body, err = ioutil.ReadFile(file)
+			if err != nil {
+				ErrorReply(r, w, NewError("Cannot retrieve static file even if found", http.StatusBadRequest), o)
+				return
+			}
+			staticFileFound = true
+			source = image.Body
+		}
+	} else {
+		debug("backup buf -else")
+		source = buf
+	}
+
 	// Infer the body MIME type via mime sniff algorithm
-	mimeType := http.DetectContentType(buf)
+	mimeType := http.DetectContentType(source)
 
 	// If cannot infer the type, infer it via magic numbers
 	if mimeType == "application/octet-stream" {
@@ -102,6 +154,10 @@ func imageHandler(w http.ResponseWriter, r *http.Request, buf []byte, operation 
 		return
 	}
 
+	if staticFileFound {
+		image.Mime = mimeType
+	}
+
 	opts, err := buildParamsFromQuery(r.URL.Query())
 	if err != nil {
 		ErrorReply(r, w, NewError("Error while processing parameters, "+err.Error(), http.StatusBadRequest), o)
@@ -117,19 +173,35 @@ func imageHandler(w http.ResponseWriter, r *http.Request, buf []byte, operation 
 		return
 	}
 
-	image, err := operation.Run(buf, opts)
-	if err != nil {
-		// Ensure the Vary header is set when an error occurs
-		if vary != "" {
-			w.Header().Set("Vary", vary)
+	if !staticFileFound {
+		image, err = operation.Run(buf, opts, w, r)
+		if err != nil {
+			// Ensure the Vary header is set when an error occurs
+			if vary != "" {
+				w.Header().Set("Vary", vary)
+			}
+			ErrorReply(r, w, NewError("Error while processing the image: "+err.Error(), http.StatusBadRequest), o)
+			return
 		}
-		ErrorReply(r, w, NewError("Error while processing the image: "+err.Error(), http.StatusBadRequest), o)
-		return
+		if file != "" && !fileExists(file) {
+			f, err := os.Create(file)
+			if err != nil {
+				ErrorReply(r, w, NewError("Cannot create static file even if found", http.StatusBadRequest), o)
+				return
+			}
+			defer f.Close()
+			_, err = f.Write(image.Body)
+			if err != nil {
+				ErrorReply(r, w, NewError("Cannot write static file", http.StatusBadRequest), o)
+				return
+			}
+		}
 	}
 
 	// Expose Content-Length response header
 	w.Header().Set("Content-Length", strconv.Itoa(len(image.Body)))
 	w.Header().Set("Content-Type", image.Mime)
+	w.Header().Set("Cache-Control", "max-age=777600")
 	if vary != "" {
 		w.Header().Set("Vary", vary)
 	}

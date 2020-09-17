@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	d "runtime/debug"
 	"strconv"
@@ -15,6 +16,16 @@ import (
 
 	"github.com/h2non/bimg"
 )
+
+const staticFilePath = `testdata`
+
+func getStaticFilePath() string {
+	return staticFilePath
+}
+
+func getStaticFile(filename string) string {
+	return filepath.Join(staticFilePath, filename)
+}
 
 var (
 	aAddr               = flag.String("a", "", "Bind address")
@@ -350,4 +361,13 @@ func debug(msg string, values ...interface{}) {
 	if debug == "imaginary" || debug == "*" {
 		log.Printf(msg, values...)
 	}
+}
+
+func fileExists(filename string) bool {
+	info, err := os.Stat(filename)
+	if os.IsNotExist(err) {
+		return false
+
+	}
+	return !info.IsDir()
 }
